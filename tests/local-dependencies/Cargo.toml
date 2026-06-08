@@ -1,0 +1,4 @@
+[workspace]
+members = ["local-deps-contract"]
+
+resolver = "2"

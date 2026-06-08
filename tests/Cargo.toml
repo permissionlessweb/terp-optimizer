@@ -1,0 +1,8 @@
+[workspace]
+members = [
+  "simple-contract",
+  "no-build",
+ 
+]
+
+resolver = "2"

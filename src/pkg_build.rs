@@ -68,10 +68,16 @@ impl Build {
             args.push("--no-default-features".to_string());
         }
 
-        // Run the build
+       // Run the build
+        // Note: Contracts built with Rust 1.88+ require CosmWasm 3.0+ on chain.
+        // Bulk memory operations (memory.copy, memory.fill) are enabled by default
+        // in the standard library and cannot be disabled without -Z build-std.
         let mut child = Command::new(crate::CARGO_PATH)
             .args(&args)
-            .env("RUSTFLAGS", "-C link-arg=-s")
+            .env(
+                "RUSTFLAGS",
+                "-C link-arg=-s",
+            )
             .current_dir(fs::canonicalize(contract).unwrap())
             .spawn()
             .unwrap();

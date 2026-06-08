@@ -165,6 +165,30 @@ pub mod package {
         })
     }
 
+    /// Checks if a Cargo.toml file contains [package.metadata.optimizer] metadata.
+    /// Returns true if the metadata section exists, false otherwise.
+    pub fn has_optimizer_metadata(cargo_toml_path: &std::path::Path) -> bool {
+        use std::fs;
+
+        match fs::read_to_string(cargo_toml_path) {
+            Ok(contents) => {
+                // Try to parse the TOML
+                match toml::from_str::<PackageCargoToml>(&contents) {
+                    Ok(parsed) => {
+                        // Check if package.metadata.optimizer exists
+                        parsed
+                            .package
+                            .metadata
+                            .and_then(|m| m.optimizer)
+                            .is_some()
+                    }
+                    Err(_) => false,
+                }
+            }
+            Err(_) => false,
+        }
+    }
+
     #[cfg(test)]
     mod tests {
         use super::*;

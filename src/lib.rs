@@ -60,10 +60,19 @@ pub fn build_workspace(workspace_members: &[String]) {
 
     let contract_packages = all_packages
         .iter()
-        .filter(|p| p.starts_with(PACKAGE_PREFIX))
+        .filter(|p| {
+            // Include if in contracts/ directory (backward compatibility)
+            if p.starts_with(PACKAGE_PREFIX) {
+                return true;
+            }
+
+            // Include if has [package.metadata.optimizer] metadata
+            let cargo_toml_path = p.join("Cargo.toml");
+            cargo_toml::package::has_optimizer_metadata(&cargo_toml_path)
+        })
         .collect::<Vec<_>>();
 
-    println!("Contracts to be built: {:?}", contract_packages);
+    println!("Contracts to be built (from contracts/ and packages with metadata): {:?}", contract_packages);
 
     for contract_dir in contract_packages {
         let contract_cargo_toml = fs::read_to_string(contract_dir.join("Cargo.toml")).unwrap();
