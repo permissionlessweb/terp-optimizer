@@ -1,8 +1,110 @@
 # CosmWasm Optimizing Compiler
 
+
 This is a Docker build with a locked set of dependencies to produce
 reproducible builds of cosmwasm smart contracts. It also does heavy
 optimization on the build size, using binary stripping and `wasm-opt`.
+
+
+---
+
+# Terp Network Fork
+
+This is a fork of `cosmwasm/optimizer:0.17.0` customized for the Terp Network ecosystem.
+Published as `terpnetwork/optimizer-arm64:0.17.0`.
+
+## Architecture
+
+The Terp fork adds three capabilities on top of the upstream optimizer:
+
+1. **Workspace root detection** — walks up from `PROJECT_DIR` to find the nearest `Cargo.toml` with `[workspace]`, so `bob` runs from the correct level regardless of nested workspace structure.
+
+2. **Multi-level dependency resolution** — mounts the full dependency tree (all crates under one parent directory) into `/workspace`, so path dependencies across sibling repositories (`../cosmos-rust/`, `../../cw-orchestrator/`, etc.) resolve correctly.
+
+3. **Wasm-safe dependency pinning** — `cosmrs`, `cosmos-sdk-proto`, and `abstract-interface` are set to `default-features = false` (or target-cfg'd behind `not(target_arch = "wasm32")`) to prevent `tokio/net` → `mio` from being compiled for wasm targets.
+
+## Usage
+
+### Standard workspace (single directory, all deps at one level)
+
+```sh
+cd /path/to/workspace
+docker run --rm \
+  -v "$(pwd)":/code \
+  --mount type=volume,source="$(basename "$(pwd)")_cache",target=/target \
+  --mount type=volume,source=registry_cache,target=/usr/local/cargo/registry \
+  terpnetwork/optimizer-arm64:0.17.0
+```
+
+### Multi-repo workspace (dependencies in sibling directories)
+
+The `crates/` folder contains all sibling repos (`abstract/`, `cosmos-rust/`, `cw-orchestrator/`, `xion-account/`, etc.).
+Mount the parent directory that CONTAINS all of them, then set `PROJECT_DIR` to the subdirectory being built:
+
+```sh
+# Mount crates/ at /workspace so all path deps resolve
+cd /path/to/crates
+docker run --rm \
+  -v "$(pwd):/workspace" \
+  -e PROJECT_DIR=/workspace/abstract/framework \
+  terpnetwork/optimizer-arm64:0.17.0
+```
+
+The optimizer finds `framework/Cargo.toml` as the workspace root, runs `bob` from there,
+and cargo resolves all `path = "../../cosmos-rust/..."` dependencies against the mounted tree.
+
+### Nested workspace (Abstract SDK pattern)
+
+The Abstract SDK has:
+- `packages/` — abstract-std, abstract-sdk, abstract-interface
+- `framework/` — contracts/ (target contracts) + framework/packages/ (framework-specific deps)
+- `framework/contracts/native/ibc-host/` — target contract
+
+The workspace root is `abstract/framework/Cargo.toml`. Bob scans its `[workspace] members`,
+finds contracts under `contracts/`, and builds each one. All sibling path deps resolve
+because `crates/` (which contains both `abstract/` and the other repos) is mounted at `/workspace`:
+
+```sh
+cd /path/to/crates
+docker run --rm \
+  -v "$(pwd):/workspace" \
+  -e PROJECT_DIR=/workspace/abstract/framework \
+  terpnetwork/optimizer-arm64:0.17.0
+```
+
+Artifacts appear in `crates/abstract/framework/artifacts/`.
+
+### Dependencies pinned for wasm safety
+
+The workspace `Cargo.toml` must contain:
+
+```toml
+[workspace.dependencies]
+cosmrs            = { path = "../../cosmos-rust/cosmrs", default-features = false }
+cosmos-sdk-proto  = { path = "../../cosmos-rust/cosmos-sdk-proto", default-features = false }
+```
+
+And `abstract-adapter/Cargo.toml` must have `abstract-interface` under:
+
+```toml
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+abstract-interface = { workspace = true }
+```
+
+These prevent `grpc-transport` → `tokio/net` → `mio` from leaking into wasm builds.
+
+## Building the optimizer
+
+```sh
+cd ~/abstract/optimizer
+make build-arm64       # local ARM build (Mac M1/M2/M3)
+make build-amd64       # local AMD build (Intel)
+make build-all         # both architectures
+make publish-arm64     # build + push to registry
+make publish-amd64     # build + push to registry
+```
+
+<!-- ## Default Cosmwasm 
 
 | Image                                | Description                                                       | x86_64 images (default)                                                                                                                                                                             | ARM images (experimental<sup>1</sup>)                                                                                                                                                                                 |
 | ------------------------------------ | ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -10,7 +112,7 @@ optimization on the build size, using binary stripping and `wasm-opt`.
 | ~~rust-optimizer~~ _deprecated_      | ~~Single contract builds~~                                        | ~~cosmwasm/rust-optimizer~~<br />[![DockerHub](https://img.shields.io/docker/v/cosmwasm/rust-optimizer?sort=semver&style=plastic)](https://hub.docker.com/r/cosmwasm/rust-optimizer)                | ~~cosmwasm/rust-optimizer-arm64~~<br />[![DockerHub](https://img.shields.io/docker/v/cosmwasm/rust-optimizer-arm64?sort=semver&style=plastic)](https://hub.docker.com/r/cosmwasm/rust-optimizer-arm64)                |
 | ~~workspace-optimizer~~ _deprecated_ | ~~Multi-contract workspaces (e.g. cosmwasm-plus)~~                | ~~cosmwasm/workspace-optimizer~~<br />[![DockerHub](https://img.shields.io/docker/v/cosmwasm/workspace-optimizer?sort=semver&style=plastic)](https://hub.docker.com/r/cosmwasm/workspace-optimizer) | ~~cosmwasm/workspace-optimizer-arm64~~<br />[![DockerHub](https://img.shields.io/docker/v/cosmwasm/workspace-optimizer-arm64?sort=semver&style=plastic)](https://hub.docker.com/r/cosmwasm/workspace-optimizer-arm64) |
 
-<sup>1</sup> ARM images do not produce the same output as the default images and are discouraged for production use. See [Notice](#notice) below.
+<sup>1</sup> ARM images do not produce the same output as the default images and are discouraged for production use. See [Notice](#notice) below. -->
 
 ## Usage
 

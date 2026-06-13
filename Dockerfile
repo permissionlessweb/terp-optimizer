@@ -1,3 +1,7 @@
+FROM rust:1.86.0-alpine AS targetarch
+ARG BUILDPLATFORM
+ARG TARGETPLATFORM
+ARG TARGETARCH
 # ============================================================
 # Stage 1: Build custom bob
 # ============================================================
@@ -13,11 +17,9 @@ RUN RUSTFLAGS='-C link-arg=-s' cargo build --release && \
 # ============================================================
 # Stage 2: Final optimizer image (multi-arch)
 # ============================================================
-ARG TARGETPLATFORM
 FROM cosmwasm/optimizer-arm64:0.17.0 AS optimizer-arm64
 FROM cosmwasm/optimizer:0.17.0 AS optimizer-amd64
 FROM optimizer-${TARGETARCH} AS final
-ARG TARGETARCH
 RUN echo "Building for architecture: ${TARGETARCH}"
 RUN rustup install 1.86.0 && rustup default 1.86.0
 RUN rustup target add wasm32-unknown-unknown --toolchain 1.86.0

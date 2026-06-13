@@ -7,11 +7,12 @@ export PATH="$PATH:/root/.cargo/bin"
 # === Resolve project directory inside container ===
 # Resolve the workspace subdirectory
 WORKSPACE_ROOT="/workspace"
-HOST_PROJECT_DIR="${PROJECT_DIR:-$(pwd)}"   # full host path passed via env
+HOST_PROJECT_DIR="${PROJECT_DIR:-$(pwd)}"   # full container path passed via env
 
-# Convert host project path to container path under /workspace
-PROJECT_BASENAME=$(basename "$HOST_PROJECT_DIR")
-PROJECT_DIR="$WORKSPACE_ROOT/$PROJECT_BASENAME"
+# Use PROJECT_DIR directly — the volume is mounted at /workspace/<repo-root>
+# and PROJECT_DIR is the full path within that volume.
+PROJECT_DIR="$HOST_PROJECT_DIR"
+PROJECT_BASENAME=$(basename "$PROJECT_DIR")
 
 if [ ! -d "$PROJECT_DIR" ]; then
     echo "ERROR: Project directory $PROJECT_DIR does not exist." >&2
@@ -29,11 +30,48 @@ echo "Workspace root: $WORKSPACE_ROOT"
 echo "Project basename: $PROJECT_BASENAME"
 echo "Project dir: $PROJECT_DIR"
 echo "Host project dir: $HOST_PROJECT_DIR"
+
+# === Resolve workspace root ===
+# Walk up from PROJECT_DIR to find the nearest Cargo.toml with [workspace].
+# This ensures bob runs from the correct level so all path dependencies
+# (whether one level or two levels deep) resolve via cargo's workspace resolution.
+WORKSPACE_ROOT_DIR="$PROJECT_DIR"
+while [ "$WORKSPACE_ROOT_DIR" != "/" ]; do
+  if [ -f "$WORKSPACE_ROOT_DIR/Cargo.toml" ] && grep -q '\[workspace\]' "$WORKSPACE_ROOT_DIR/Cargo.toml" 2>/dev/null; then
+    echo "Workspace root found: $WORKSPACE_ROOT_DIR"
+    break
+  fi
+  WORKSPACE_ROOT_DIR=$(dirname "$WORKSPACE_ROOT_DIR")
+done
+if [ "$WORKSPACE_ROOT_DIR" = "/" ]; then
+  echo "No workspace Cargo.toml found — using PROJECT_DIR directly"
+  WORKSPACE_ROOT_DIR="$PROJECT_DIR"
+fi
+
 rustup toolchain list
 cargo --version
 
 mkdir -p "$PROJECT_DIR/artifacts"
 rm -f /target/wasm32-unknown-unknown/release/*.wasm
+
+# # === Pin tokio without net feature for wasm compatibility ===
+# # Some workspace deps (cosmrs → tendermint-rpc → async-tungstenite → tokio)
+# # pull in tokio's default features (includes "net" → mio) which don't compile
+# # for wasm32-unknown-unknown. Ensure tokio in workspace.dependencies has
+# # default-features = false so contracts build cleanly for wasm.
+# WORKSPACE_CARGO="$WORKSPACE_ROOT_DIR/Cargo.toml"
+# if [ -f "$WORKSPACE_CARGO" ]; then
+#   if grep -q '^tokio.*=.*version' "$WORKSPACE_CARGO"; then
+#     echo "  tokio already defined in workspace.dependencies — checking default-features..."
+#     if grep -q '^tokio.*default-features.*false' "$WORKSPACE_CARGO"; then
+#       echo "  ✓ tokio already has default-features = false"
+#     else
+#       echo "  ⚠ tokio has default-features = true (may cause mio/wasm errors)"
+#     fi
+#   else
+#     echo "  ⚠ tokio not found in workspace.dependencies — add it if contracts pull in tokio"
+#   fi
+# fi
 
 # Hide excluded crates from bob's filesystem scanner
 EXCLUDED_CRATES="${EXCLUDED_CRATES:-}"
@@ -41,7 +79,7 @@ STASH_DIR="/tmp/_infuser_optimizer_stash"
 RESTORE=0
 
 for crate in $EXCLUDED_CRATES; do
-  CRATE_PATH="$PROJECT_DIR/contracts/external/$crate"
+  CRATE_PATH="$WORKSPACE_ROOT_DIR/contracts/external/$crate"
   if [ -d "$CRATE_PATH" ]; then
     echo "Stashing excluded crate: $crate"
     mkdir -p "$STASH_DIR"
@@ -50,9 +88,9 @@ for crate in $EXCLUDED_CRATES; do
   fi
 done
 
-echo "Building project $PROJECT_DIR ..."
+echo "Building project (from workspace root: $WORKSPACE_ROOT_DIR) ..."
 (
-  cd "$PROJECT_DIR"
+  cd "$WORKSPACE_ROOT_DIR"
   /usr/local/bin/bob .
 )
 BUILD_EXIT=$?
